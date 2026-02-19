@@ -50,7 +50,7 @@ def fetch_position_data(symbol, side, start_ms, limit=10000):
     """Fetch margin position (long/short) historical data."""
     url = (
         f"{BASE_URL}/stats1/pos.size:1m:{symbol}:{side}/hist"
-        f"?limit={limit}&start={start_ms}&sort=1"
+        f"?limit={limit}&start={start_ms}&sort=-1"
     )
     print(f"  Fetching {symbol} {side}...")
     data = fetch_json(url)
@@ -62,7 +62,7 @@ def fetch_candle_data(symbol, timeframe, start_ms, limit=10000):
     """Fetch OHLCV candle data for price."""
     url = (
         f"{BASE_URL}/candles/trade:{timeframe}:{symbol}/hist"
-        f"?limit={limit}&start={start_ms}&sort=1"
+        f"?limit={limit}&start={start_ms}&sort=-1"
     )
     print(f"  Fetching {symbol} candles ({timeframe})...")
     data = fetch_json(url)
@@ -124,6 +124,14 @@ def collect_period(period_key):
         # Fetch price candles
         candles = fetch_candle_data(symbol, timeframe, start_ms)
         print(f"  Candles: {len(candles)} data points")
+
+        # Reverse to chronological order (sort=-1 returns newest first)
+        if isinstance(longs, list):
+            longs.reverse()
+        if isinstance(shorts, list):
+            shorts.reverse()
+        if isinstance(candles, list):
+            candles.reverse()
 
         # Process candles -> [timestamp, close_price]
         price_data = []
