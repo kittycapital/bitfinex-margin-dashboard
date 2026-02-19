@@ -1,989 +1,422 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bitfinex Margin Longs/Shorts | HerdVibe</title>
-<meta name="description" content="Track Bitfinex margin long and short positions for BTC, ETH, SOL with price overlay. Free real-time sentiment dashboard.">
-
-<!-- Open Graph -->
+<meta name="description" content="Bitfinex 마진 롱/숏 포지션 추적 - BTC, ETH, SOL 가격과 함께 실시간 센티먼트 분석">
 <meta property="og:title" content="Bitfinex Margin Longs/Shorts Dashboard">
-<meta property="og:description" content="Track BTC, ETH, SOL margin positions on Bitfinex. Longs, Shorts & Price analysis.">
+<meta property="og:description" content="BTC, ETH, SOL 마진 롱/숏 포지션 추적 — herdvibe.com">
 <meta property="og:url" content="https://herdvibe.com/90">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.7/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-adapter-date-fns/3.0.0/chartjs-adapter-date-fns.bundle.min.js"></script>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  ::-webkit-scrollbar { display: none; }
+  * { -ms-overflow-style: none; scrollbar-width: none; }
+
   :root {
-    --bg-primary: #0a0a0f;
-    --bg-secondary: #111118;
-    --bg-card: #16161f;
-    --bg-hover: #1e1e2a;
-    --border: #2a2a3a;
-    --text-primary: #e8e8ef;
-    --text-secondary: #8888a0;
-    --text-muted: #55556a;
-    --accent-green: #00e676;
-    --accent-green-dim: rgba(0,230,118,0.12);
-    --accent-red: #ff3d5a;
-    --accent-red-dim: rgba(255,61,90,0.12);
-    --accent-blue: #448aff;
-    --accent-yellow: #ffd740;
-    --price-line: #448aff;
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #111111;
+    --bg-tertiary: #1a1a1a;
+    --text-primary: #ffffff;
+    --text-secondary: #888888;
+    --text-muted: #555555;
+    --accent-green: #00d4aa;
+    --accent-red: #ff4757;
+    --accent-yellow: #ffd43b;
+    --accent-blue: #4dabf7;
+    --border-color: #2a2a2a;
   }
 
-  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { overflow-x: hidden; }
 
   body {
-    font-family: 'JetBrains Mono', monospace;
-    background: var(--bg-primary);
+    font-family: 'Noto Sans KR', sans-serif;
+    background-color: var(--bg-primary);
     color: var(--text-primary);
     min-height: 100vh;
-    overflow-x: hidden;
+    line-height: 1.6;
   }
 
-  /* Subtle grid background */
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
-    background-size: 60px 60px;
-    pointer-events: none;
-    z-index: 0;
-  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
 
-  .container {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 20px;
-    position: relative;
-    z-index: 1;
-  }
-
-  /* ── Header ── */
   .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 0 24px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 24px;
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .logo-mark {
-    width: 36px;
-    height: 36px;
-    background: linear-gradient(135deg, var(--accent-green), var(--accent-blue));
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 700;
-    font-size: 14px;
-    color: #000;
-  }
-
-  .header-title h1 {
-    font-size: 18px;
-    font-weight: 600;
-    letter-spacing: -0.5px;
-  }
-
-  .header-title .sub {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-weight: 400;
-    margin-top: 2px;
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .last-update {
-    font-size: 10px;
-    color: var(--text-muted);
-    text-align: right;
-  }
-
-  /* ── Controls ── */
-  .controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    text-align: center;
+    padding: 30px 0 20px;
+    border-bottom: 1px solid var(--border-color);
     margin-bottom: 20px;
-    flex-wrap: wrap;
-    gap: 12px;
   }
+  .header h1 {
+    font-size: 1.8rem; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 6px;
+    background: linear-gradient(135deg, #fff 0%, #888 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .header p { color: var(--text-secondary); font-size: 0.85rem; }
+  .header .update-time { color: var(--text-muted); font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; margin-top: 4px; }
 
   .coin-tabs {
-    display: flex;
-    gap: 4px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 4px;
+    display: flex; justify-content: flex-start; gap: 8px; margin-bottom: 20px;
+    padding: 0 5px; overflow-x: auto; -webkit-overflow-scrolling: touch;
   }
-
   .coin-tab {
-    padding: 8px 20px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 13px;
-    font-weight: 500;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    border-radius: 7px;
-    transition: all 0.2s;
-    letter-spacing: 0.5px;
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px;
+    cursor: pointer; transition: all 0.2s ease; min-width: fit-content; flex-shrink: 0;
   }
+  .coin-tab:hover { background: var(--bg-tertiary); border-color: #3a3a3a; }
+  .coin-tab.active { background: var(--bg-tertiary); border-color: var(--accent-yellow); box-shadow: 0 0 15px rgba(255,212,59,0.1); }
 
-  .coin-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
-  .coin-tab.active {
-    color: #fff;
-    background: var(--bg-card);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  .coin-icon {
+    width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0; font-weight: 700; font-size: 0.6rem;
+    font-family: 'JetBrains Mono', monospace; color: #fff;
   }
+  .coin-icon.btc { background: #f7931a; }
+  .coin-icon.eth { background: #627eea; }
+  .coin-icon.sol { background: #9945ff; }
 
-  .coin-tab .coin-icon {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-right: 6px;
-    vertical-align: middle;
-  }
+  .coin-info { display: flex; flex-direction: column; align-items: flex-start; }
+  .coin-name { font-weight: 600; font-size: 0.85rem; }
+  .coin-price { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-secondary); }
 
-  .coin-tab .coin-icon.btc { background: #f7931a; }
-  .coin-tab .coin-icon.eth { background: #627eea; }
-  .coin-tab .coin-icon.sol { background: #9945ff; }
-
-  .period-tabs {
-    display: flex;
-    gap: 4px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 4px;
-  }
-
+  .period-tabs { display: flex; gap: 4px; margin-bottom: 20px; padding: 0 5px; }
   .period-tab {
-    padding: 8px 14px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    font-weight: 500;
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-    border-radius: 7px;
-    transition: all 0.2s;
+    padding: 8px 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; font-weight: 500;
+    background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;
+    color: var(--text-secondary); cursor: pointer; transition: all 0.2s;
   }
+  .period-tab:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+  .period-tab.active { background: var(--bg-tertiary); border-color: var(--accent-blue); color: var(--accent-blue); }
 
-  .period-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
-  .period-tab.active {
-    color: var(--accent-blue);
-    background: rgba(68,138,255,0.1);
-  }
-
-  /* ── Summary Cards ── */
-  .summary-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-
+  .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
   .summary-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
-    transition: border-color 0.2s;
+    background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px;
+    padding: 14px 16px; transition: border-color 0.2s;
   }
-
-  .summary-card:hover { border-color: var(--text-muted); }
-
-  .summary-card .label {
-    font-size: 10px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-  }
-
-  .summary-card .value {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -1px;
-  }
-
-  .summary-card .change {
-    font-size: 11px;
-    margin-top: 4px;
-    font-weight: 500;
-  }
-
-  .summary-card .change.up { color: var(--accent-green); }
-  .summary-card .change.down { color: var(--accent-red); }
-
+  .summary-card:hover { border-color: #3a3a3a; }
+  .summary-card .label { font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; font-family: 'JetBrains Mono', monospace; }
+  .summary-card .value { font-size: 1.3rem; font-weight: 700; font-family: 'JetBrains Mono', monospace; letter-spacing: -0.5px; }
+  .summary-card .change { font-size: 0.7rem; margin-top: 3px; font-weight: 500; font-family: 'JetBrains Mono', monospace; }
   .value-green { color: var(--accent-green); }
   .value-red { color: var(--accent-red); }
   .value-blue { color: var(--accent-blue); }
+  .value-yellow { color: var(--accent-yellow); }
+  .chg-up { color: var(--accent-green); }
+  .chg-down { color: var(--accent-red); }
 
-  /* ── Chart Panels ── */
   .chart-section {
-    margin-bottom: 16px;
+    background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px;
+    padding: 20px; margin-bottom: 12px; position: relative;
+  }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .section-title {
+    font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 8px;
+    font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);
+  }
+  .section-title .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .section-value { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 600; }
+  .chart-wrap { position: relative; width: 100%; }
+  .chart-wrap.h-price { height: 280px; }
+  .chart-wrap.h-pos { height: 180px; }
+
+  .watermark {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 14px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+    color: rgba(255,255,255,0.03); letter-spacing: 4px; pointer-events: none; z-index: 1;
   }
 
-  .chart-panel {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px 16px 12px;
-    margin-bottom: 8px;
-    position: relative;
-  }
-
-  .chart-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-  }
-
-  .chart-panel-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    letter-spacing: 0.5px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .chart-panel-title .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-
-  .chart-panel-title .dot.price { background: var(--accent-blue); }
-  .chart-panel-title .dot.short { background: var(--accent-red); }
-  .chart-panel-title .dot.long { background: var(--accent-green); }
-
-  .chart-panel-value {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .chart-canvas-wrap {
-    position: relative;
-    width: 100%;
-  }
-
-  .chart-canvas-wrap.price-chart { height: 280px; }
-  .chart-canvas-wrap.position-chart { height: 180px; }
-
-  .chart-canvas-wrap canvas {
-    width: 100% !important;
-    height: 100% !important;
-  }
-
-  /* ── Loading & Error ── */
-  .loading-overlay {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 300px;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .spinner {
-    width: 32px; height: 32px;
-    border: 3px solid var(--border);
-    border-top-color: var(--accent-blue);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
+  .loading-overlay { display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; gap: 16px; color: var(--text-muted); }
+  .spinner { width: 30px; height: 30px; border: 3px solid var(--border-color); border-top-color: var(--accent-yellow); border-radius: 50%; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 0.75rem; }
+  .error-msg { text-align: center; padding: 40px; color: var(--accent-red); font-size: 0.8rem; }
+  .error-msg .sub { font-size: 0.7rem; color: var(--text-muted); margin-top: 6px; }
 
-  .loading-text {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .error-msg {
-    text-align: center;
-    padding: 40px;
-    color: var(--accent-red);
-    font-size: 13px;
-  }
-
-  /* ── Share Bar ── */
   .share-bar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    margin-top: 24px;
-    padding: 20px 0;
-    border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin-top: 24px; padding: 20px 0; border-top: 1px solid var(--border-color); flex-wrap: wrap;
   }
-
   .share-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 18px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    font-weight: 500;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-decoration: none;
-    background: var(--bg-card);
-    color: var(--text-secondary);
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px;
+    font-family: 'Noto Sans KR', sans-serif; font-size: 0.75rem; font-weight: 500;
+    border: 1px solid var(--border-color); border-radius: 10px; cursor: pointer;
+    transition: all 0.2s; text-decoration: none; background: var(--bg-secondary); color: var(--text-secondary);
   }
-
-  .share-btn:hover {
-    border-color: var(--text-muted);
-    color: var(--text-primary);
-    background: var(--bg-hover);
-    transform: translateY(-1px);
-  }
-
+  .share-btn:hover { border-color: #3a3a3a; color: var(--text-primary); background: var(--bg-tertiary); }
   .share-btn.x-btn:hover { border-color: #1da1f2; color: #1da1f2; }
   .share-btn.kakao-btn:hover { border-color: #fee500; color: #fee500; }
-  .share-btn.copy-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+  .share-btn.insta-btn:hover { border-color: #e1306c; color: #e1306c; }
   .share-btn.fb-btn:hover { border-color: #1877f2; color: #1877f2; }
-
+  .share-btn.copy-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
   .share-btn svg { width: 16px; height: 16px; fill: currentColor; }
 
   .copied-toast {
-    position: fixed;
-    bottom: 30px;
-    left: 50%;
-    transform: translateX(-50%) translateY(20px);
-    background: var(--accent-green);
-    color: #000;
-    padding: 10px 24px;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    opacity: 0;
-    transition: all 0.3s;
-    pointer-events: none;
-    z-index: 999;
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--accent-green); color: #000; padding: 10px 24px; border-radius: 8px;
+    font-size: 0.75rem; font-weight: 600; opacity: 0; transition: all 0.3s; pointer-events: none; z-index: 999;
   }
+  .copied-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-  .copied-toast.show {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
-
-  /* ── Footer ── */
-  .footer {
-    text-align: center;
-    padding: 24px 0 16px;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .footer a {
-    color: var(--text-secondary);
-    text-decoration: none;
-  }
-
+  .footer { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.7rem; }
+  .footer a { color: var(--text-secondary); text-decoration: none; }
   .footer a:hover { color: var(--text-primary); }
 
-  /* ── Watermark ── */
-  .watermark {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 14px;
-    font-weight: 700;
-    color: rgba(255,255,255,0.03);
-    letter-spacing: 4px;
-    pointer-events: none;
-    text-transform: uppercase;
-    z-index: 1;
-  }
-
-  /* ── Responsive ── */
   @media (max-width: 768px) {
     .container { padding: 12px; }
-    .header { flex-direction: column; align-items: flex-start; }
-    .controls { flex-direction: column; align-items: stretch; }
-    .coin-tabs, .period-tabs { justify-content: center; }
+    .header { padding: 20px 0 15px; }
+    .header h1 { font-size: 1.4rem; }
     .summary-row { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-    .summary-card .value { font-size: 18px; }
-    .chart-canvas-wrap.price-chart { height: 220px; }
-    .chart-canvas-wrap.position-chart { height: 140px; }
-    .share-bar { flex-wrap: wrap; }
-    .share-btn { padding: 8px 14px; font-size: 11px; }
+    .summary-card .value { font-size: 1.1rem; }
+    .chart-wrap.h-price { height: 220px; }
+    .chart-wrap.h-pos { height: 140px; }
+    .share-btn { padding: 8px 12px; font-size: 0.7rem; }
   }
-
   @media (max-width: 480px) {
-    .coin-tab { padding: 6px 14px; font-size: 12px; }
-    .period-tab { padding: 6px 10px; font-size: 11px; }
-    .summary-row { grid-template-columns: 1fr 1fr; }
+    .header h1 { font-size: 1.2rem; }
+    .coin-tab { padding: 8px 10px; gap: 6px; }
+    .coin-icon { width: 24px; height: 24px; font-size: 0.55rem; }
+    .coin-name { font-size: 0.75rem; }
+    .period-tab { padding: 6px 12px; font-size: 0.7rem; }
+    .summary-card .value { font-size: 1rem; }
+    .chart-wrap.h-price { height: 200px; }
+    .chart-wrap.h-pos { height: 120px; }
   }
 </style>
 </head>
 <body>
-
 <div class="container">
-  <!-- Header -->
-  <div class="header">
-    <div class="header-left">
-      <div class="logo-mark">HV</div>
-      <div class="header-title">
-        <h1>Bitfinex Margin Positions</h1>
-        <div class="sub">LONGS / SHORTS — BTC · ETH · SOL</div>
-      </div>
+
+  <header class="header">
+    <h1>Bitfinex Margin Longs / Shorts</h1>
+    <p>BTC · ETH · SOL 마진 포지션 추적 및 가격 분석</p>
+    <div class="update-time" id="updateTime">loading...</div>
+  </header>
+
+  <nav class="coin-tabs">
+    <div class="coin-tab active" data-coin="btc">
+      <div class="coin-icon btc">BTC</div>
+      <div class="coin-info"><span class="coin-name">Bitcoin</span><span class="coin-price" id="live-btc">—</span></div>
     </div>
-    <div class="header-right">
-      <div class="last-update" id="lastUpdate">Loading...</div>
+    <div class="coin-tab" data-coin="eth">
+      <div class="coin-icon eth">ETH</div>
+      <div class="coin-info"><span class="coin-name">Ethereum</span><span class="coin-price" id="live-eth">—</span></div>
     </div>
+    <div class="coin-tab" data-coin="sol">
+      <div class="coin-icon sol">SOL</div>
+      <div class="coin-info"><span class="coin-name">Solana</span><span class="coin-price" id="live-sol">—</span></div>
+    </div>
+  </nav>
+
+  <div class="period-tabs">
+    <button class="period-tab active" data-period="90d">90D</button>
+    <button class="period-tab" data-period="1y">1Y</button>
+    <button class="period-tab" data-period="3y">3Y</button>
+    <button class="period-tab" data-period="5y">5Y</button>
+    <button class="period-tab" data-period="all">ALL</button>
   </div>
 
-  <!-- Controls -->
-  <div class="controls">
-    <div class="coin-tabs">
-      <button class="coin-tab active" data-coin="btc">
-        <span class="coin-icon btc"></span>BTC
-      </button>
-      <button class="coin-tab" data-coin="eth">
-        <span class="coin-icon eth"></span>ETH
-      </button>
-      <button class="coin-tab" data-coin="sol">
-        <span class="coin-icon sol"></span>SOL
-      </button>
-    </div>
-    <div class="period-tabs">
-      <button class="period-tab active" data-period="90d">90D</button>
-      <button class="period-tab" data-period="1y">1Y</button>
-      <button class="period-tab" data-period="3y">3Y</button>
-      <button class="period-tab" data-period="5y">5Y</button>
-      <button class="period-tab" data-period="all">ALL</button>
-    </div>
-  </div>
-
-  <!-- Summary Cards -->
   <div class="summary-row">
-    <div class="summary-card">
-      <div class="label">Current Price</div>
-      <div class="value value-blue" id="sumPrice">—</div>
-      <div class="change" id="sumPriceChange"></div>
-    </div>
-    <div class="summary-card">
-      <div class="label">Longs</div>
-      <div class="value value-green" id="sumLongs">—</div>
-      <div class="change" id="sumLongsChange"></div>
-    </div>
-    <div class="summary-card">
-      <div class="label">Shorts</div>
-      <div class="value value-red" id="sumShorts">—</div>
-      <div class="change" id="sumShortsChange"></div>
-    </div>
-    <div class="summary-card">
-      <div class="label">L/S Ratio</div>
-      <div class="value" id="sumRatio">—</div>
-      <div class="change" id="sumRatioLabel"></div>
-    </div>
+    <div class="summary-card"><div class="label">Current Price</div><div class="value value-blue" id="sumPrice">—</div><div class="change" id="sumPriceChg"></div></div>
+    <div class="summary-card"><div class="label">Longs</div><div class="value value-green" id="sumLongs">—</div><div class="change" id="sumLongsChg"></div></div>
+    <div class="summary-card"><div class="label">Shorts</div><div class="value value-red" id="sumShorts">—</div><div class="change" id="sumShortsChg"></div></div>
+    <div class="summary-card"><div class="label">L/S Ratio</div><div class="value value-yellow" id="sumRatio">—</div><div class="change" id="sumRatioLbl"></div></div>
   </div>
 
-  <!-- Charts Container -->
-  <div id="chartsContainer">
-    <div class="loading-overlay" id="loadingOverlay">
-      <div class="spinner"></div>
-      <div class="loading-text">Fetching margin data from Bitfinex...</div>
-    </div>
+  <div id="loadingArea">
+    <div class="loading-overlay"><div class="spinner"></div><div class="loading-text">Bitfinex 마진 데이터 로딩중...</div></div>
   </div>
 
-  <!-- Chart Panels (hidden template, shown after load) -->
-  <div class="chart-section" id="chartSection" style="display:none;">
-    <!-- Price Chart -->
-    <div class="chart-panel">
+  <div id="chartArea" style="display:none;">
+    <section class="chart-section">
       <div class="watermark">herdvibe.com</div>
-      <div class="chart-panel-header">
-        <div class="chart-panel-title">
-          <span class="dot price"></span>
-          <span id="pricePanelLabel">PRICE (USD)</span>
-        </div>
-        <div class="chart-panel-value" id="pricePanelValue"></div>
+      <div class="section-header">
+        <h2 class="section-title"><span class="dot" style="background:var(--accent-blue)"></span><span id="lblPrice">BTC/USD PRICE</span></h2>
+        <span class="section-value value-blue" id="valPrice"></span>
       </div>
-      <div class="chart-canvas-wrap price-chart">
-        <canvas id="priceChart"></canvas>
-      </div>
-    </div>
+      <div class="chart-wrap h-price"><canvas id="priceChart"></canvas></div>
+    </section>
 
-    <!-- Shorts Chart -->
-    <div class="chart-panel">
+    <section class="chart-section">
       <div class="watermark">herdvibe.com</div>
-      <div class="chart-panel-header">
-        <div class="chart-panel-title">
-          <span class="dot short"></span>
-          <span id="shortsPanelLabel">SHORTS</span>
-        </div>
-        <div class="chart-panel-value" id="shortsPanelValue"></div>
+      <div class="section-header">
+        <h2 class="section-title"><span class="dot" style="background:var(--accent-red)"></span><span id="lblShorts">BTC/USD SHORTS</span></h2>
+        <span class="section-value value-red" id="valShorts"></span>
       </div>
-      <div class="chart-canvas-wrap position-chart">
-        <canvas id="shortsChart"></canvas>
-      </div>
-    </div>
+      <div class="chart-wrap h-pos"><canvas id="shortsChart"></canvas></div>
+    </section>
 
-    <!-- Longs Chart -->
-    <div class="chart-panel">
+    <section class="chart-section">
       <div class="watermark">herdvibe.com</div>
-      <div class="chart-panel-header">
-        <div class="chart-panel-title">
-          <span class="dot long"></span>
-          <span id="longsPanelLabel">LONGS</span>
-        </div>
-        <div class="chart-panel-value" id="longsPanelValue"></div>
+      <div class="section-header">
+        <h2 class="section-title"><span class="dot" style="background:var(--accent-green)"></span><span id="lblLongs">BTC/USD LONGS</span></h2>
+        <span class="section-value value-green" id="valLongs"></span>
       </div>
-      <div class="chart-canvas-wrap position-chart">
-        <canvas id="longsChart"></canvas>
-      </div>
-    </div>
+      <div class="chart-wrap h-pos"><canvas id="longsChart"></canvas></div>
+    </section>
   </div>
 
-  <!-- Share Bar -->
   <div class="share-bar">
-    <button class="share-btn x-btn" onclick="shareX()">
-      <svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-      Post
-    </button>
-    <button class="share-btn kakao-btn" onclick="shareKakao()">
-      <svg viewBox="0 0 24 24"><path d="M12 3C6.477 3 2 6.463 2 10.691c0 2.724 1.8 5.112 4.508 6.458-.174.637-.63 2.308-.721 2.667-.113.449.165.443.347.322.143-.095 2.273-1.544 3.193-2.168.872.128 1.768.195 2.673.195 5.523 0 10-3.463 10-7.691S17.523 3 12 3z"/></svg>
-      KakaoTalk
-    </button>
-    <button class="share-btn fb-btn" onclick="shareFB()">
-      <svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-      Share
-    </button>
-    <button class="share-btn copy-btn" onclick="copyLink()">
-      <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-      Copy Link
-    </button>
+    <button class="share-btn x-btn" onclick="shareX()"><svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>Post</button>
+    <button class="share-btn kakao-btn" onclick="shareKakao()"><svg viewBox="0 0 24 24"><path d="M12 3C6.477 3 2 6.463 2 10.691c0 2.724 1.8 5.112 4.508 6.458-.174.637-.63 2.308-.721 2.667-.113.449.165.443.347.322.143-.095 2.273-1.544 3.193-2.168.872.128 1.768.195 2.673.195 5.523 0 10-3.463 10-7.691S17.523 3 12 3z"/></svg>카카오톡</button>
+    <button class="share-btn insta-btn" onclick="shareInsta()"><svg viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>Instagram</button>
+    <button class="share-btn fb-btn" onclick="shareFB()"><svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Facebook</button>
+    <button class="share-btn copy-btn" onclick="copyLink()"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>링크 복사</button>
   </div>
 
-  <!-- Footer -->
-  <div class="footer">
-    <a href="https://herdvibe.com" target="_blank">herdvibe.com</a>
-    &nbsp;·&nbsp; Data: Bitfinex Public API &nbsp;·&nbsp; Updated hourly
-  </div>
+  <footer class="footer">
+    <a href="https://herdvibe.com" target="_blank">herdvibe.com</a> · Data: Bitfinex Public API · 매시간 자동 업데이트
+  </footer>
 </div>
 
-<div class="copied-toast" id="copiedToast">Link copied!</div>
+<div class="copied-toast" id="copiedToast">링크가 복사되었습니다!</div>
 
 <script>
-// ── Config ──
 const SHARE_URL = 'https://herdvibe.com/90';
-const SHARE_TITLE = 'Bitfinex Margin Longs/Shorts Dashboard';
-const SHARE_DESC = 'Track BTC, ETH, SOL margin positions on Bitfinex — herdvibe.com';
-
-const BITFINEX_API = 'https://api-pub.bitfinex.com/v2';
+const BFX = 'https://api-pub.bitfinex.com/v2';
 const SYMBOLS = { btc: 'tBTCUSD', eth: 'tETHUSD', sol: 'tSOLUSD' };
-const COIN_LABELS = { btc: 'BTC/USD', eth: 'ETH/USD', sol: 'SOL/USD' };
-const COIN_COLORS = {
-  btc: { price: '#f7931a', priceDim: 'rgba(247,147,26,0.08)' },
-  eth: { price: '#627eea', priceDim: 'rgba(98,126,234,0.08)' },
-  sol: { price: '#9945ff', priceDim: 'rgba(153,69,255,0.08)' },
+const LABELS = { btc: 'BTC/USD', eth: 'ETH/USD', sol: 'SOL/USD' };
+const COLORS = {
+  btc: { line: '#f7931a', fill: 'rgba(247,147,26,0.08)' },
+  eth: { line: '#627eea', fill: 'rgba(98,126,234,0.08)' },
+  sol: { line: '#9945ff', fill: 'rgba(153,69,255,0.08)' },
 };
+const P_DAYS = { '90d':90, '1y':365, '3y':1095, '5y':1825, 'all':3650 };
+const P_TF = { '90d':'1h', '1y':'4h', '3y':'1D', '5y':'1D', 'all':'1D' };
 
-const PERIOD_DAYS = { '90d': 90, '1y': 365, '3y': 1095, '5y': 1825, 'all': 3650 };
-const PERIOD_TF = { '90d': '1h', '1y': '4h', '3y': '1D', '5y': '1D', 'all': '1D' };
+let coin='btc', period='90d', charts={}, cache={};
 
-let currentCoin = 'btc';
-let currentPeriod = '90d';
-let chartInstances = { price: null, shorts: null, longs: null };
-let dataCache = {};
-
-// ── Data Fetching ──
-async function fetchBitfinex(url) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return resp.json();
+// Live prices via Binance WS
+function initWS() {
+  try {
+    const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker');
+    ws.onmessage = (e) => {
+      const d = JSON.parse(e.data), sym = d.stream.split('@')[0], p = parseFloat(d.data.c);
+      const m = { btcusdt:'btc', ethusdt:'eth', solusdt:'sol' };
+      if (m[sym]) { const el = document.getElementById('live-'+m[sym]); if(el) el.textContent = fmtP(p); }
+    };
+  } catch(e) {}
 }
 
-async function loadData(coin, period) {
-  const cacheKey = `${coin}_${period}`;
-  if (dataCache[cacheKey]) return dataCache[cacheKey];
-
-  // Try loading from pre-collected JSON first
+// Fetch
+async function loadData() {
+  const k = coin+'_'+period;
+  if (cache[k]) return cache[k];
   try {
-    const resp = await fetch(`data/${period}.json`);
-    if (resp.ok) {
-      const json = await resp.json();
-      if (json[coin]) {
-        dataCache[cacheKey] = json[coin];
-        if (json.updated_at) {
-          document.getElementById('lastUpdate').textContent =
-            'Updated: ' + new Date(json.updated_at).toLocaleString();
-        }
-        return json[coin];
-      }
-    }
-  } catch (e) { /* fall through to API */ }
+    const r = await fetch('data/'+period+'.json');
+    if (r.ok) { const j = await r.json(); if(j[coin]) { cache[k]=j[coin]; if(j.updated_at) document.getElementById('updateTime').textContent='Updated: '+new Date(j.updated_at).toLocaleString(); return j[coin]; } }
+  } catch(e) {}
 
-  // Fallback: fetch directly from Bitfinex API
-  const symbol = SYMBOLS[coin];
-  const days = PERIOD_DAYS[period];
-  const tf = PERIOD_TF[period];
-  const startMs = Date.now() - days * 86400000;
-  const limit = 10000;
-
-  const [longs, shorts, candles] = await Promise.all([
-    fetchBitfinex(`${BITFINEX_API}/stats1/pos.size:1m:${symbol}:long/hist?limit=${limit}&start=${startMs}&sort=1`),
-    fetchBitfinex(`${BITFINEX_API}/stats1/pos.size:1m:${symbol}:short/hist?limit=${limit}&start=${startMs}&sort=1`),
-    fetchBitfinex(`${BITFINEX_API}/candles/trade:${tf}:${symbol}/hist?limit=${limit}&start=${startMs}&sort=1`),
+  const sym=SYMBOLS[coin], days=P_DAYS[period], tf=P_TF[period], start=Date.now()-days*864e5;
+  const [lo,sh,ca] = await Promise.all([
+    fetch(`${BFX}/stats1/pos.size:1m:${sym}:long/hist?limit=10000&start=${start}&sort=1`).then(r=>r.json()),
+    fetch(`${BFX}/stats1/pos.size:1m:${sym}:short/hist?limit=10000&start=${start}&sort=1`).then(r=>r.json()),
+    fetch(`${BFX}/candles/trade:${tf}:${sym}/hist?limit=10000&start=${start}&sort=1`).then(r=>r.json()),
   ]);
-
-  const price = (candles || []).map(c => [c[0], c[2]]); // [mts, close]
-  const result = { longs: longs || [], shorts: shorts || [], price };
-
-  dataCache[cacheKey] = result;
-  document.getElementById('lastUpdate').textContent =
-    'Live from Bitfinex API · ' + new Date().toLocaleTimeString();
-
-  return result;
+  const res = { longs:lo||[], shorts:sh||[], price:(ca||[]).map(c=>[c[0],c[2]]) };
+  cache[k]=res;
+  document.getElementById('updateTime').textContent='Live · '+new Date().toLocaleTimeString();
+  return res;
 }
 
-// ── Number Formatting ──
-function fmt(n, decimals = 0) {
-  if (n == null || isNaN(n)) return '—';
-  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-  return n.toFixed(decimals);
+// Format
+function fmt(n,d=0) { if(n==null||isNaN(n)) return '—'; if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+'M'; if(Math.abs(n)>=1e3) return (n/1e3).toFixed(1)+'K'; return n.toFixed(d); }
+function fmtP(n) { if(n==null||isNaN(n)) return '—'; if(n>=1e4) return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); if(n>=100) return '$'+n.toFixed(1); return '$'+n.toFixed(2); }
+function fmtPct(v) { if(v==null||isNaN(v)) return ''; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
+
+function updateSummary(d) {
+  const lp=d.price.length?d.price[d.price.length-1][1]:null, fp=d.price.length?d.price[0][1]:null;
+  const ll=d.longs.length?d.longs[d.longs.length-1][1]:null, fl=d.longs.length?d.longs[0][1]:null;
+  const ls=d.shorts.length?d.shorts[d.shorts.length-1][1]:null, fs=d.shorts.length?d.shorts[0][1]:null;
+  document.getElementById('sumPrice').textContent=fmtP(lp);
+  document.getElementById('sumLongs').textContent=fmt(ll,1);
+  document.getElementById('sumShorts').textContent=fmt(ls,1);
+  if(ll&&ls&&ls>0){const r=ll/ls; document.getElementById('sumRatio').textContent=r.toFixed(2); document.getElementById('sumRatio').className='value '+(r>=1?'value-green':'value-red'); document.getElementById('sumRatioLbl').textContent=r>=1?'Long Dominant':'Short Dominant'; document.getElementById('sumRatioLbl').className='change '+(r>=1?'chg-up':'chg-down');}
+  setC('sumPriceChg',fp?((lp-fp)/fp)*100:null); setC('sumLongsChg',fl?((ll-fl)/fl)*100:null); setC('sumShortsChg',fs?((ls-fs)/fs)*100:null);
 }
+function setC(id,v){const e=document.getElementById(id);if(v==null){e.textContent='';return;}e.textContent=fmtPct(v);e.className='change '+(v>=0?'chg-up':'chg-down');}
 
-function fmtPrice(n) {
-  if (n == null || isNaN(n)) return '—';
-  if (n >= 10000) return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  if (n >= 100) return '$' + n.toFixed(1);
-  return '$' + n.toFixed(2);
-}
+// Chart
+function mkChart(id, data, color, fill, tipCb) {
+  const ctx=document.getElementById(id).getContext('2d');
+  if(charts[id]) charts[id].destroy();
+  const g=ctx.createLinearGradient(0,0,0,ctx.canvas.parentElement.clientHeight);
+  g.addColorStop(0,fill); g.addColorStop(1,'rgba(0,0,0,0)');
 
-function fmtPct(change) {
-  if (change == null || isNaN(change)) return '';
-  const sign = change >= 0 ? '+' : '';
-  return sign + change.toFixed(2) + '%';
-}
-
-// ── Summary Cards ──
-function updateSummary(data) {
-  const lastPrice = data.price.length ? data.price[data.price.length - 1][1] : null;
-  const firstPrice = data.price.length ? data.price[0][1] : null;
-  const lastLong = data.longs.length ? data.longs[data.longs.length - 1][1] : null;
-  const firstLong = data.longs.length ? data.longs[0][1] : null;
-  const lastShort = data.shorts.length ? data.shorts[data.shorts.length - 1][1] : null;
-  const firstShort = data.shorts.length ? data.shorts[0][1] : null;
-
-  document.getElementById('sumPrice').textContent = fmtPrice(lastPrice);
-  document.getElementById('sumLongs').textContent = fmt(lastLong, 1);
-  document.getElementById('sumShorts').textContent = fmt(lastShort, 1);
-
-  // L/S Ratio
-  if (lastLong != null && lastShort != null && lastShort > 0) {
-    const ratio = lastLong / lastShort;
-    document.getElementById('sumRatio').textContent = ratio.toFixed(2);
-    document.getElementById('sumRatio').className =
-      'value ' + (ratio >= 1 ? 'value-green' : 'value-red');
-    document.getElementById('sumRatioLabel').textContent =
-      ratio >= 1 ? 'Long Dominant' : 'Short Dominant';
-    document.getElementById('sumRatioLabel').className =
-      'change ' + (ratio >= 1 ? 'up' : 'down');
-  }
-
-  // Changes
-  const priceChg = firstPrice ? ((lastPrice - firstPrice) / firstPrice) * 100 : null;
-  const longChg = firstLong ? ((lastLong - firstLong) / firstLong) * 100 : null;
-  const shortChg = firstShort ? ((lastShort - firstShort) / firstShort) * 100 : null;
-
-  setChange('sumPriceChange', priceChg);
-  setChange('sumLongsChange', longChg);
-  setChange('sumShortsChange', shortChg);
-}
-
-function setChange(id, val) {
-  const el = document.getElementById(id);
-  if (val == null) { el.textContent = ''; return; }
-  el.textContent = fmtPct(val);
-  el.className = 'change ' + (val >= 0 ? 'up' : 'down');
-}
-
-// ── Chart Creation ──
-const chartDefaults = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: { duration: 400 },
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      backgroundColor: 'rgba(16,16,25,0.95)',
-      titleFont: { family: "'JetBrains Mono'", size: 11 },
-      bodyFont: { family: "'JetBrains Mono'", size: 12, weight: '600' },
-      padding: 12,
-      cornerRadius: 8,
-      borderColor: 'rgba(255,255,255,0.1)',
-      borderWidth: 1,
-      displayColors: false,
-    },
-  },
-  scales: {
-    x: {
-      type: 'time',
-      grid: { color: 'rgba(255,255,255,0.03)', drawBorder: false },
-      ticks: {
-        font: { family: "'JetBrains Mono'", size: 10 },
-        color: '#55556a',
-        maxTicksLimit: 8,
-        maxRotation: 0,
-      },
-      border: { display: false },
-    },
-    y: {
-      position: 'right',
-      grid: { color: 'rgba(255,255,255,0.03)', drawBorder: false },
-      ticks: {
-        font: { family: "'JetBrains Mono'", size: 10 },
-        color: '#55556a',
-        maxTicksLimit: 5,
-      },
-      border: { display: false },
-    },
-  },
-};
-
-function toChartData(arr) {
-  return arr.map(d => ({ x: d[0], y: d[1] }));
-}
-
-function createChart(canvasId, data, color, fillColor, tooltipPrefix, yCallback) {
-  const ctx = document.getElementById(canvasId).getContext('2d');
-
-  // Destroy existing
-  if (chartInstances[canvasId.replace('Chart', '')]) {
-    chartInstances[canvasId.replace('Chart', '')].destroy();
-  }
-
-  const gradient = ctx.createLinearGradient(0, 0, 0, ctx.canvas.parentElement.clientHeight);
-  gradient.addColorStop(0, fillColor || 'rgba(68,138,255,0.15)');
-  gradient.addColorStop(1, 'rgba(0,0,0,0)');
-
-  const config = {
-    type: 'line',
-    data: {
-      datasets: [{
-        data: toChartData(data),
-        borderColor: color,
-        borderWidth: 1.5,
-        backgroundColor: gradient,
-        fill: true,
-        pointRadius: 0,
-        pointHitRadius: 10,
-        tension: 0.1,
-      }],
-    },
-    options: {
-      ...chartDefaults,
-      plugins: {
-        ...chartDefaults.plugins,
-        tooltip: {
-          ...chartDefaults.plugins.tooltip,
-          callbacks: {
-            title: (items) => {
-              if (!items.length) return '';
-              return new Date(items[0].parsed.x).toLocaleDateString('en-US', {
-                year: 'numeric', month: 'short', day: 'numeric',
-                hour: '2-digit', minute: '2-digit',
-              });
-            },
-            label: (item) => {
-              const val = item.parsed.y;
-              if (yCallback) return tooltipPrefix + yCallback(val);
-              return tooltipPrefix + val.toLocaleString();
-            },
+  charts[id] = new Chart(ctx, {
+    type:'line',
+    data:{ datasets:[{ data:data.map(d=>({x:d[0],y:d[1]})), borderColor:color, borderWidth:1.5, backgroundColor:g, fill:true, pointRadius:0, pointHitRadius:10, tension:0.1 }] },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:{duration:300},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(15,15,15,0.95)', titleFont:{family:"'JetBrains Mono'",size:11}, bodyFont:{family:"'JetBrains Mono'",size:12,weight:'600'},
+          padding:12, cornerRadius:8, borderColor:'rgba(255,255,255,0.1)', borderWidth:1, displayColors:false,
+          callbacks:{
+            title:(i)=>i.length?new Date(i[0].parsed.x).toLocaleDateString('ko-KR',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'',
+            label:tipCb,
           },
         },
       },
-      scales: {
-        ...chartDefaults.scales,
-        y: {
-          ...chartDefaults.scales.y,
-          ticks: {
-            ...chartDefaults.scales.y.ticks,
-            callback: yCallback || function(v) { return fmt(v); },
-          },
-        },
+      scales:{
+        x:{ type:'time', grid:{color:'rgba(255,255,255,0.04)',drawBorder:false}, ticks:{font:{family:"'JetBrains Mono'",size:10},color:'#555',maxTicksLimit:8,maxRotation:0}, border:{display:false} },
+        y:{ position:'right', grid:{color:'rgba(255,255,255,0.04)',drawBorder:false}, ticks:{font:{family:"'JetBrains Mono'",size:10},color:'#555',maxTicksLimit:5}, border:{display:false} },
       },
     },
-  };
-
-  const chart = new Chart(ctx, config);
-  const key = canvasId.replace('Chart', '');
-  chartInstances[key] = chart;
-  return chart;
+  });
 }
 
-// ── Main Render ──
+// Render
 async function render() {
-  const loading = document.getElementById('loadingOverlay');
-  const section = document.getElementById('chartSection');
-  const container = document.getElementById('chartsContainer');
-
-  loading.style.display = 'flex';
-  section.style.display = 'none';
-  container.style.display = 'block';
-
+  const la=document.getElementById('loadingArea'), ca=document.getElementById('chartArea');
+  la.style.display='block'; la.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div class="loading-text">Bitfinex 마진 데이터 로딩중...</div></div>';
+  ca.style.display='none';
   try {
-    const data = await loadData(currentCoin, currentPeriod);
-
-    if (!data.price.length && !data.longs.length && !data.shorts.length) {
-      container.innerHTML = '<div class="error-msg">No data available for this combination.</div>';
-      return;
-    }
-
-    // Update labels
-    const label = COIN_LABELS[currentCoin];
-    document.getElementById('pricePanelLabel').innerHTML =
-      `<span class="dot price"></span> ${label} PRICE`;
-    document.getElementById('shortsPanelLabel').innerHTML =
-      `<span class="dot short"></span> ${label} SHORTS`;
-    document.getElementById('longsPanelLabel').innerHTML =
-      `<span class="dot long"></span> ${label} LONGS`;
-
-    // Update panel values
-    if (data.price.length) {
-      document.getElementById('pricePanelValue').textContent =
-        fmtPrice(data.price[data.price.length - 1][1]);
-    }
-    if (data.shorts.length) {
-      document.getElementById('shortsPanelValue').textContent =
-        fmt(data.shorts[data.shorts.length - 1][1], 1) + ' ' + currentCoin.toUpperCase();
-    }
-    if (data.longs.length) {
-      document.getElementById('longsPanelValue').textContent =
-        fmt(data.longs[data.longs.length - 1][1], 1) + ' ' + currentCoin.toUpperCase();
-    }
-
-    updateSummary(data);
-
-    loading.style.display = 'none';
-    section.style.display = 'block';
-    container.style.display = 'none';
-
-    const colors = COIN_COLORS[currentCoin];
-
-    // Price chart
-    createChart('priceChart', data.price, colors.price, colors.priceDim, 'Price: ',
-      (v) => fmtPrice(v));
-
-    // Shorts chart
-    createChart('shortsChart', data.shorts, '#ff3d5a', 'rgba(255,61,90,0.12)', 'Shorts: ',
-      (v) => fmt(v, 2) + ' ' + currentCoin.toUpperCase());
-
-    // Longs chart
-    createChart('longsChart', data.longs, '#00e676', 'rgba(0,230,118,0.12)', 'Longs: ',
-      (v) => fmt(v, 2) + ' ' + currentCoin.toUpperCase());
-
-  } catch (err) {
-    console.error('Load error:', err);
-    loading.style.display = 'none';
-    container.innerHTML = `
-      <div class="error-msg">
-        Failed to load data. This may be due to rate limiting.<br>
-        <span style="font-size:11px;color:var(--text-muted);">
-          Error: ${err.message}. Try again in a few seconds.
-        </span>
-      </div>`;
-    container.style.display = 'block';
+    const d = await loadData();
+    if(!d.price.length&&!d.longs.length&&!d.shorts.length){la.innerHTML='<div class="error-msg">데이터가 없습니다.</div>';return;}
+    const lb=LABELS[coin];
+    document.getElementById('lblPrice').textContent=lb+' PRICE';
+    document.getElementById('lblShorts').textContent=lb+' SHORTS';
+    document.getElementById('lblLongs').textContent=lb+' LONGS';
+    if(d.price.length) document.getElementById('valPrice').textContent=fmtP(d.price[d.price.length-1][1]);
+    if(d.shorts.length) document.getElementById('valShorts').textContent=fmt(d.shorts[d.shorts.length-1][1],1)+' '+coin.toUpperCase();
+    if(d.longs.length) document.getElementById('valLongs').textContent=fmt(d.longs[d.longs.length-1][1],1)+' '+coin.toUpperCase();
+    updateSummary(d);
+    la.style.display='none'; ca.style.display='block';
+    const c=COLORS[coin];
+    mkChart('priceChart',d.price,c.line,c.fill,(i)=>'Price: '+fmtP(i.parsed.y));
+    mkChart('shortsChart',d.shorts,'#ff4757','rgba(255,71,87,0.1)',(i)=>'Shorts: '+fmt(i.parsed.y,2)+' '+coin.toUpperCase());
+    mkChart('longsChart',d.longs,'#00d4aa','rgba(0,212,170,0.1)',(i)=>'Longs: '+fmt(i.parsed.y,2)+' '+coin.toUpperCase());
+  } catch(err) {
+    console.error(err);
+    la.innerHTML='<div class="error-msg">데이터 로드 실패<div class="sub">'+err.message+' — 잠시 후 다시 시도해주세요.</div></div>';
   }
 }
 
-// ── Event Listeners ──
-document.querySelectorAll('.coin-tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.coin-tab').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    currentCoin = btn.dataset.coin;
-    render();
-  });
-});
+// Events
+document.querySelectorAll('.coin-tab').forEach(el=>{el.addEventListener('click',()=>{document.querySelectorAll('.coin-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');coin=el.dataset.coin;render();});});
+document.querySelectorAll('.period-tab').forEach(el=>{el.addEventListener('click',()=>{document.querySelectorAll('.period-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');period=el.dataset.period;render();});});
 
-document.querySelectorAll('.period-tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.period-tab').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    currentPeriod = btn.dataset.period;
-    render();
-  });
-});
+// Share
+function shareX(){const t=encodeURIComponent('Bitfinex Margin Longs/Shorts Dashboard\nBTC, ETH, SOL 마진 포지션 추적'),u=encodeURIComponent(SHARE_URL);window.open('https://twitter.com/intent/tweet?text='+t+'&url='+u,'_blank','width=600,height=400');}
+function shareKakao(){window.open('https://story.kakao.com/share?url='+encodeURIComponent(SHARE_URL),'_blank','width=600,height=400');}
+function shareInsta(){navigator.clipboard.writeText(SHARE_URL).then(()=>{const t=document.getElementById('copiedToast');t.textContent='링크 복사됨! Instagram 스토리에 붙여넣기하세요';t.classList.add('show');setTimeout(()=>{t.classList.remove('show');t.textContent='링크가 복사되었습니다!';},3000);});window.open('https://www.instagram.com/','_blank');}
+function shareFB(){window.open('https://www.facebook.com/sharer/sharer.php?u='+encodeURIComponent(SHARE_URL),'_blank','width=600,height=400');}
+function copyLink(){navigator.clipboard.writeText(SHARE_URL).then(()=>{const t=document.getElementById('copiedToast');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000);});}
 
-// ── Share Functions ──
-function shareX() {
-  const text = encodeURIComponent(`${SHARE_TITLE}\n${SHARE_DESC}`);
-  const url = encodeURIComponent(SHARE_URL);
-  window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank', 'width=600,height=400');
-}
-
-function shareKakao() {
-  // KakaoTalk share via URL scheme
-  const url = encodeURIComponent(SHARE_URL);
-  const text = encodeURIComponent(SHARE_TITLE);
-  window.open(
-    `https://story.kakao.com/share?url=${url}`,
-    '_blank', 'width=600,height=400'
-  );
-}
-
-function shareFB() {
-  const url = encodeURIComponent(SHARE_URL);
-  window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`, '_blank', 'width=600,height=400');
-}
-
-function copyLink() {
-  navigator.clipboard.writeText(SHARE_URL).then(() => {
-    const toast = document.getElementById('copiedToast');
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 2000);
-  });
-}
-
-// ── Init ──
+// Init
+initWS();
 render();
 </script>
-
 </body>
 </html>
