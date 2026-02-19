@@ -316,12 +316,14 @@ async function loadData() {
   } catch(e) {}
 
   const sym=SYMBOLS[coin], days=P_DAYS[period], tf=P_TF[period], start=Date.now()-days*864e5;
+  // Use sort=-1 (newest first) to always get latest data, then reverse for chronological order
   const [lo,sh,ca] = await Promise.all([
-    fetch(`${BFX}/stats1/pos.size:1m:${sym}:long/hist?limit=10000&start=${start}&sort=1`).then(r=>r.json()),
-    fetch(`${BFX}/stats1/pos.size:1m:${sym}:short/hist?limit=10000&start=${start}&sort=1`).then(r=>r.json()),
-    fetch(`${BFX}/candles/trade:${tf}:${sym}/hist?limit=10000&start=${start}&sort=1`).then(r=>r.json()),
+    fetch(`${BFX}/stats1/pos.size:1m:${sym}:long/hist?limit=10000&start=${start}&sort=-1`).then(r=>r.json()),
+    fetch(`${BFX}/stats1/pos.size:1m:${sym}:short/hist?limit=10000&start=${start}&sort=-1`).then(r=>r.json()),
+    fetch(`${BFX}/candles/trade:${tf}:${sym}/hist?limit=10000&start=${start}&sort=-1`).then(r=>r.json()),
   ]);
-  const res = { longs:lo||[], shorts:sh||[], price:(ca||[]).map(c=>[c[0],c[2]]) };
+  // Reverse to chronological order (oldest first)
+  const res = { longs:(lo||[]).reverse(), shorts:(sh||[]).reverse(), price:(ca||[]).reverse().map(c=>[c[0],c[2]]) };
   cache[k]=res;
   document.getElementById('updateTime').textContent='Live · '+new Date().toLocaleTimeString();
   return res;
