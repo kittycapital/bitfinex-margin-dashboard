@@ -290,12 +290,15 @@ const COLORS = {
   sol: { line: '#9945ff', fill: 'rgba(153,69,255,0.08)' },
 };
 const P_DAYS = { '90d':90, '1y':365, '3y':1095, '5y':1825, 'all':3650 };
-const P_TF = { '90d':'1h', '1y':'4h', '3y':'1D', '5y':'1D', 'all':'1D' };
-const S_TF = { '90d':'1h', '1y':'6h', '3y':'1D', '5y':'1D', 'all':'1D' };
+const P_TF   = { '90d':'1h', '1y':'4h', '3y':'1D', '5y':'1D', 'all':'1D' };
+// Max pages of stats (10000 pts/page at 1m = ~7d per page)
+const P_PAGES = { '90d':15, '1y':20, '3y':20, '5y':20, 'all':20 };
 
 let coin='btc', period='90d', charts={}, cache={};
 
-// Live prices via Binance WS
+// ============================================================
+// LIVE PRICES — Binance WebSocket
+// ============================================================
 function initWS() {
   try {
     const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker');
@@ -304,33 +307,100 @@ function initWS() {
       const m = { btcusdt:'btc', ethusdt:'eth', solusdt:'sol' };
       if (m[sym]) { const el = document.getElementById('live-'+m[sym]); if(el) el.textContent = fmtP(p); }
     };
+    ws.onclose = () => setTimeout(initWS, 5000);
   } catch(e) {}
 }
 
-// Fetch
+// ============================================================
+// PAGINATED STATS FETCHER
+// ============================================================
+async function fetchStatsPaged(sym, side, startMs, maxPages) {
+  const all = [];
+  let cursor = Date.now();
+  for (let i = 0; i < maxPages; i++) {
+    try {
+      const url = `${BFX}/stats1/pos.size:1m:${sym}:${side}/hist?limit=10000&start=${startMs}&end=${cursor}&sort=-1`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if (!Array.isArray(d) || !d.length) break;
+      all.push(...d);
+      const oldest = d[d.length - 1][0];
+      cursor = oldest - 1;
+      if (cursor <= startMs || d.length < 10000) break;
+    } catch(e) { break; }
+  }
+  // Sort chronological
+  all.sort((a, b) => a[0] - b[0]);
+  // Downsample to max ~2500 points for performance
+  if (all.length > 2500) {
+    const step = Math.ceil(all.length / 2500);
+    const sampled = [];
+    for (let i = 0; i < all.length; i++) {
+      if (i % step === 0 || i === all.length - 1) sampled.push(all[i]);
+    }
+    return sampled;
+  }
+  return all;
+}
+
+// ============================================================
+// DATA LOADER
+// ============================================================
 async function loadData() {
   const k = coin+'_'+period;
   if (cache[k]) return cache[k];
+
+  // 1) Try pre-computed JSON first
   try {
     const r = await fetch('data/'+period+'.json');
-    if (r.ok) { const j = await r.json(); if(j[coin]) { cache[k]=j[coin]; if(j.updated_at) document.getElementById('updateTime').textContent='Updated: '+new Date(j.updated_at).toLocaleString(); return j[coin]; } }
+    if (r.ok) {
+      const j = await r.json();
+      if (j[coin]) {
+        cache[k] = j[coin];
+        if (j.updated_at) document.getElementById('updateTime').textContent = 'Updated: '+new Date(j.updated_at).toLocaleString();
+        return j[coin];
+      }
+    }
   } catch(e) {}
 
-  const sym=SYMBOLS[coin], days=P_DAYS[period], tf=P_TF[period], stf=S_TF[period], start=Date.now()-days*864e5;
-  // Use sort=-1 (newest first) to always get latest data, then reverse for chronological order
-  const [lo,sh,ca] = await Promise.all([
-    fetch(`${BFX}/stats1/pos.size:${stf}:${sym}:long/hist?limit=10000&start=${start}&sort=-1`).then(r=>r.json()),
-    fetch(`${BFX}/stats1/pos.size:${stf}:${sym}:short/hist?limit=10000&start=${start}&sort=-1`).then(r=>r.json()),
-    fetch(`${BFX}/candles/trade:${tf}:${sym}/hist?limit=10000&start=${start}&sort=-1`).then(r=>r.json()),
+  // 2) Live API fallback — paginated stats + candles
+  const sym = SYMBOLS[coin], days = P_DAYS[period], tf = P_TF[period];
+  const startMs = Date.now() - days * 864e5;
+  const maxPg = P_PAGES[period] || 15;
+
+  // Fetch all three in parallel (stats are paginated internally)
+  const [longRaw, shortRaw, candleRaw] = await Promise.all([
+    fetchStatsPaged(sym, 'long', startMs, maxPg),
+    fetchStatsPaged(sym, 'short', startMs, maxPg),
+    fetch(`${BFX}/candles/trade:${tf}:${sym}/hist?limit=10000&start=${startMs}&sort=-1`).then(r=>r.json()),
   ]);
-  // Reverse to chronological order (oldest first)
-  const res = { longs:(lo||[]).reverse(), shorts:(sh||[]).reverse(), price:(ca||[]).reverse().map(c=>[c[0],c[2]]) };
-  cache[k]=res;
-  document.getElementById('updateTime').textContent='Live · '+new Date().toLocaleTimeString();
+
+  // Candles: reverse to chronological, extract [ts, close]
+  const priceAll = (candleRaw||[]).reverse().map(c => [c[0], c[2]]);
+
+  // 3) SYNC: trim price to match stats time range
+  let statsStart = Infinity;
+  if (longRaw.length) statsStart = Math.min(statsStart, longRaw[0][0]);
+  if (shortRaw.length) statsStart = Math.min(statsStart, shortRaw[0][0]);
+
+  let price;
+  if (statsStart < Infinity) {
+    price = priceAll.filter(p => p[0] >= statsStart);
+    // If trimming removed everything, use all price data
+    if (!price.length) price = priceAll;
+  } else {
+    price = priceAll;
+  }
+
+  const res = { longs: longRaw, shorts: shortRaw, price: price };
+  cache[k] = res;
+  document.getElementById('updateTime').textContent = 'Live · '+new Date().toLocaleTimeString();
   return res;
 }
 
-// Format
+// ============================================================
+// FORMATTING
+// ============================================================
 function fmt(n,d=0) { if(n==null||isNaN(n)) return '—'; if(Math.abs(n)>=1e6) return (n/1e6).toFixed(2)+'M'; if(Math.abs(n)>=1e3) return (n/1e3).toFixed(1)+'K'; return n.toFixed(d); }
 function fmtP(n) { if(n==null||isNaN(n)) return '—'; if(n>=1e4) return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); if(n>=100) return '$'+n.toFixed(1); return '$'+n.toFixed(2); }
 function fmtPct(v) { if(v==null||isNaN(v)) return ''; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
@@ -347,7 +417,9 @@ function updateSummary(d) {
 }
 function setC(id,v){const e=document.getElementById(id);if(v==null){e.textContent='';return;}e.textContent=fmtPct(v);e.className='change '+(v>=0?'chg-up':'chg-down');}
 
-// Chart
+// ============================================================
+// CHART
+// ============================================================
 function mkChart(id, data, color, fill, tipCb) {
   const ctx=document.getElementById(id).getContext('2d');
   if(charts[id]) charts[id].destroy();
@@ -379,7 +451,9 @@ function mkChart(id, data, color, fill, tipCb) {
   });
 }
 
-// Render
+// ============================================================
+// RENDER
+// ============================================================
 async function render() {
   const la=document.getElementById('loadingArea'), ca=document.getElementById('chartArea');
   la.style.display='block'; la.innerHTML='<div class="loading-overlay"><div class="spinner"></div><div class="loading-text">Bitfinex 마진 데이터 로딩중...</div></div>';
@@ -406,21 +480,49 @@ async function render() {
   }
 }
 
-// Events
+// ============================================================
+// EVENTS
+// ============================================================
 document.querySelectorAll('.coin-tab').forEach(el=>{el.addEventListener('click',()=>{document.querySelectorAll('.coin-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');coin=el.dataset.coin;render();});});
 document.querySelectorAll('.period-tab').forEach(el=>{el.addEventListener('click',()=>{document.querySelectorAll('.period-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');period=el.dataset.period;render();});});
 
-// Clipboard — 3-step iframe fallback
-function copyToClipboard(t){try{window.parent.postMessage({type:'clipboard',text:t},'*');}catch(e){}try{window.parent.postMessage({type:'copy',text:t},'*');}catch(e){}if(navigator.clipboard&&navigator.clipboard.writeText&&window.isSecureContext){navigator.clipboard.writeText(t).catch(function(){});}else{var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.left='-9999px';ta.style.top='-9999px';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);}}
+// ============================================================
+// CLIPBOARD — 3-step iframe fallback
+// ============================================================
+function copyToClipboard(t){
+  try{window.parent.postMessage({type:'clipboard',text:t},'*');}catch(e){}
+  try{window.parent.postMessage({type:'copy',text:t},'*');}catch(e){}
+  if(navigator.clipboard&&navigator.clipboard.writeText&&window.isSecureContext){
+    navigator.clipboard.writeText(t).catch(function(){});
+  }else{
+    var ta=document.createElement('textarea');
+    ta.value=t;ta.style.position='fixed';ta.style.left='-9999px';
+    ta.style.top='-9999px';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.focus();ta.select();
+    try{document.execCommand('copy');}catch(e){}
+    document.body.removeChild(ta);
+  }
+}
 
-// Share
+// ============================================================
+// SHARE
+// ============================================================
 function shareX(){const t=encodeURIComponent('Bitfinex Margin Longs/Shorts Dashboard\nBTC, ETH, SOL 마진 포지션 추적'),u=encodeURIComponent(SHARE_URL);window.open('https://twitter.com/intent/tweet?text='+t+'&url='+u,'_blank','width=600,height=400');}
 function shareKakao(){window.open('https://story.kakao.com/share?url='+encodeURIComponent(SHARE_URL),'_blank','width=600,height=400');}
 function shareInsta(){copyToClipboard(SHARE_URL);const t=document.getElementById('copiedToast');t.textContent='링크 복사됨! Instagram 스토리에 붙여넣기하세요';t.classList.add('show');setTimeout(()=>{t.classList.remove('show');t.textContent='링크가 복사되었습니다!';},3000);}
 function shareTG(){const t=encodeURIComponent('Bitfinex Margin Longs/Shorts Dashboard\nBTC, ETH, SOL 마진 포지션 추적'),u=encodeURIComponent(SHARE_URL);window.open('https://t.me/share/url?url='+u+'&text='+t,'_blank','width=600,height=400');}
 function copyLink(){copyToClipboard(SHARE_URL);const t=document.getElementById('copiedToast');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000);}
 
-// Init
+// ============================================================
+// IFRAME HEIGHT
+// ============================================================
+function postHeight(){try{var h=document.documentElement.scrollHeight;window.parent.postMessage({id:'hvBFX',height:h},'*');}catch(e){}}
+window.addEventListener('load',function(){postHeight();setTimeout(postHeight,2000);});
+new MutationObserver(postHeight).observe(document.body,{childList:true,subtree:true,attributes:true});
+
+// ============================================================
+// INIT
+// ============================================================
 initWS();
 render();
 </script>
