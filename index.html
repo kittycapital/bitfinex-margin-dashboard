@@ -116,15 +116,16 @@
   .chart-section {
     background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px;
     padding: 20px; margin-bottom: 12px; position: relative;
+    overflow: hidden;
   }
-  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; position: relative; z-index: 2; }
   .section-title {
     font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 8px;
     font-family: 'JetBrains Mono', monospace; color: var(--text-secondary);
   }
   .section-title .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .section-value { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; font-weight: 600; }
-  .chart-wrap { position: relative; width: 100%; }
+  .chart-wrap { position: relative; width: 100%; z-index: 2; }
   .chart-wrap.h-price { height: 280px; }
   .chart-wrap.h-pos { height: 180px; }
 
@@ -132,6 +133,7 @@
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     font-size: 42px; font-weight: 700; font-family: 'JetBrains Mono', monospace;
     color: rgba(255,255,255,0.07); letter-spacing: 8px; pointer-events: none; z-index: 1;
+    white-space: nowrap;
   }
 
   .loading-overlay { display: flex; align-items: center; justify-content: center; height: 300px; flex-direction: column; gap: 16px; color: var(--text-muted); }
@@ -178,6 +180,7 @@
     .summary-card .value { font-size: 1.1rem; }
     .chart-wrap.h-price { height: 220px; }
     .chart-wrap.h-pos { height: 140px; }
+    .watermark { font-size: 24px; letter-spacing: 4px; }
     .share-btn { padding: 8px 12px; font-size: 0.7rem; }
   }
   @media (max-width: 480px) {
@@ -189,6 +192,7 @@
     .summary-card .value { font-size: 1rem; }
     .chart-wrap.h-price { height: 200px; }
     .chart-wrap.h-pos { height: 120px; }
+    .watermark { font-size: 18px; letter-spacing: 3px; }
   }
 </style>
 </head>
@@ -220,8 +224,7 @@
     <button class="period-tab active" data-period="90d">90D</button>
     <button class="period-tab" data-period="1y">1Y</button>
     <button class="period-tab" data-period="3y">3Y</button>
-    <button class="period-tab" data-period="5y">5Y</button>
-    <button class="period-tab" data-period="all">ALL</button>
+
   </div>
 
   <div class="summary-row">
@@ -289,14 +292,14 @@ const COLORS = {
   eth: { line: '#627eea', fill: 'rgba(98,126,234,0.08)' },
   sol: { line: '#9945ff', fill: 'rgba(153,69,255,0.08)' },
 };
-const P_DAYS  = { '90d':90, '1y':365, '3y':1095, '5y':1825, 'all':3650 };
-const P_TF    = { '90d':'1h', '1y':'4h', '3y':'1D', '5y':'1D', 'all':'1D' };
-// Stats pages: 1h × 10000 = 416 days/page
-const S_PAGES = { '90d':1, '1y':1, '3y':3, '5y':5, 'all':9 };
+const P_DAYS  = { '90d':90, '1y':365, '3y':1095 };
+const P_TF    = { '90d':'1h', '1y':'4h', '3y':'1D' };
+// Stats: 1h × 10000 = 416 days/page
+const S_PAGES = { '90d':1, '1y':1, '3y':3 };
 
 let coin='btc', period='90d', charts={}, cache={};
 
-// ── Live prices via Binance WS ──
+// ── Live prices ──
 function initWS() {
   try {
     const ws = new WebSocket('wss://stream.binance.com:9443/stream?streams=btcusdt@ticker/ethusdt@ticker/solusdt@ticker');
@@ -309,7 +312,7 @@ function initWS() {
   } catch(e) {}
 }
 
-// ── Paginated stats fetcher (1h timeframe) ──
+// ── Paginated stats (always 1h) ──
 async function fetchStats(sym, side, startMs, maxPages) {
   const all = [];
   let cursor = Date.now();
@@ -320,24 +323,17 @@ async function fetchStats(sym, side, startMs, maxPages) {
       const d = await r.json();
       if (!Array.isArray(d) || !d.length) break;
       all.push(...d);
-      const oldest = d[d.length - 1][0];
-      cursor = oldest - 1;
+      cursor = d[d.length - 1][0] - 1;
       if (cursor <= startMs || d.length < 10000) break;
     } catch(e) { break; }
   }
-  // Sort chronological & dedupe
   all.sort((a, b) => a[0] - b[0]);
   const seen = new Set(), out = [];
-  for (const item of all) {
-    if (!seen.has(item[0])) { seen.add(item[0]); out.push(item); }
-  }
-  // Downsample if too many points
+  for (const item of all) { if (!seen.has(item[0])) { seen.add(item[0]); out.push(item); } }
   if (out.length > 2500) {
-    const step = Math.ceil(out.length / 2500), sampled = [];
-    for (let i = 0; i < out.length; i++) {
-      if (i % step === 0 || i === out.length - 1) sampled.push(out[i]);
-    }
-    return sampled;
+    const step = Math.ceil(out.length / 2500), s = [];
+    for (let i = 0; i < out.length; i++) { if (i % step === 0 || i === out.length - 1) s.push(out[i]); }
+    return s;
   }
   return out;
 }
@@ -347,7 +343,7 @@ async function loadData() {
   const k = coin+'_'+period;
   if (cache[k]) return cache[k];
 
-  // 1) Try pre-computed JSON
+  // Try pre-computed JSON
   try {
     const r = await fetch('data/'+period+'.json');
     if (r.ok) {
@@ -360,7 +356,7 @@ async function loadData() {
     }
   } catch(e) {}
 
-  // 2) Live API fallback — 1h stats with pagination
+  // Live API fallback
   const sym = SYMBOLS[coin], days = P_DAYS[period], tf = P_TF[period];
   const startMs = Date.now() - days * 864e5;
   const pages = S_PAGES[period] || 1;
@@ -371,7 +367,19 @@ async function loadData() {
     fetch(`${BFX}/candles/trade:${tf}:${sym}/hist?limit=10000&start=${startMs}&sort=-1`).then(r=>r.json()),
   ]);
 
-  const price = (candleRaw||[]).reverse().map(c => [c[0], c[2]]);
+  const priceAll = (candleRaw||[]).reverse().map(c => [c[0], c[2]]);
+
+  // SYNC: trim price to match stats time range
+  let statsStart = Infinity;
+  if (longs.length) statsStart = Math.min(statsStart, longs[0][0]);
+  if (shorts.length) statsStart = Math.min(statsStart, shorts[0][0]);
+
+  let price = priceAll;
+  if (statsStart < Infinity) {
+    const trimmed = priceAll.filter(p => p[0] >= statsStart);
+    if (trimmed.length) price = trimmed;
+  }
+
   const res = { longs, shorts, price };
   cache[k] = res;
   document.getElementById('updateTime').textContent = 'Live · '+new Date().toLocaleTimeString();
@@ -401,7 +409,6 @@ function mkChart(id, data, color, fill, tipCb) {
   if(charts[id]) charts[id].destroy();
   const g=ctx.createLinearGradient(0,0,0,ctx.canvas.parentElement.clientHeight);
   g.addColorStop(0,fill); g.addColorStop(1,'rgba(0,0,0,0)');
-
   charts[id] = new Chart(ctx, {
     type:'line',
     data:{ datasets:[{ data:data.map(d=>({x:d[0],y:d[1]})), borderColor:color, borderWidth:1.5, backgroundColor:g, fill:true, pointRadius:0, pointHitRadius:10, tension:0.1 }] },
@@ -458,19 +465,16 @@ async function render() {
 document.querySelectorAll('.coin-tab').forEach(el=>{el.addEventListener('click',()=>{document.querySelectorAll('.coin-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');coin=el.dataset.coin;render();});});
 document.querySelectorAll('.period-tab').forEach(el=>{el.addEventListener('click',()=>{document.querySelectorAll('.period-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');period=el.dataset.period;render();});});
 
-// ── Clipboard — 3-step iframe fallback ──
+// ── Clipboard ──
 function copyToClipboard(t){
   try{window.parent.postMessage({type:'clipboard',text:t},'*');}catch(e){}
   try{window.parent.postMessage({type:'copy',text:t},'*');}catch(e){}
   if(navigator.clipboard&&navigator.clipboard.writeText&&window.isSecureContext){
     navigator.clipboard.writeText(t).catch(function(){});
   }else{
-    var ta=document.createElement('textarea');
-    ta.value=t;ta.style.position='fixed';ta.style.left='-9999px';
-    ta.style.top='-9999px';ta.style.opacity='0';
+    var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.left='-9999px';ta.style.top='-9999px';ta.style.opacity='0';
     document.body.appendChild(ta);ta.focus();ta.select();
-    try{document.execCommand('copy');}catch(e){}
-    document.body.removeChild(ta);
+    try{document.execCommand('copy');}catch(e){}document.body.removeChild(ta);
   }
 }
 
@@ -482,7 +486,7 @@ function shareTG(){const t=encodeURIComponent('Bitfinex Margin Longs/Shorts Dash
 function copyLink(){copyToClipboard(SHARE_URL);const t=document.getElementById('copiedToast');t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000);}
 
 // ── Iframe height ──
-function postHeight(){try{var h=document.documentElement.scrollHeight;window.parent.postMessage({id:'hvBFX',height:h},'*');}catch(e){}}
+function postHeight(){try{window.parent.postMessage({id:'hvBFX',height:document.documentElement.scrollHeight},'*');}catch(e){}}
 window.addEventListener('load',function(){postHeight();setTimeout(postHeight,2000);});
 new MutationObserver(postHeight).observe(document.body,{childList:true,subtree:true,attributes:true});
 
