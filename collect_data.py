@@ -4,9 +4,9 @@ Bitfinex Margin Long/Short Position Data Collector
 Collects BTC, ETH, SOL margin longs/shorts and price data.
 Designed to run via GitHub Actions on a schedule.
 
-Stats API uses 1h timeframe for all periods:
-  - 1h × 10000 = 416 days per page
-  - 90d/1y = 1 page, 3y = 3 pages, 5y = 5 pages, all = 9 pages
+Stats API: pos.size:1h = 10000 × 1h = 416 days per page.
+Bitfinex stats history goes back ~3-3.5 years max → cap at 3 pages.
+For 5Y/ALL: price chart is trimmed to match stats range.
 """
 
 import json
@@ -25,20 +25,18 @@ COINS = {
 }
 
 # Period configs: (days_back, candle_timeframe, max_stat_pages)
-# Stats always use 1h: 10000 × 1h = 416 days per page
+# Stats use 1h: 10000 × 1h = 416 days/page, max 3 pages (~1248 days)
+# Bitfinex stats only go back ~3-3.5 years, so 3 pages covers all available data
 PERIODS = {
     "90d":  (90,    "1h",  1),
     "1y":   (365,   "4h",  1),
     "3y":   (1095,  "1D",  3),
-    "5y":   (1825,  "1D",  5),
-    "all":  (3650,  "1D",  9),
 }
 
-RATE_LIMIT_DELAY = 2.5  # seconds between API calls
+RATE_LIMIT_DELAY = 2.5
 
 
 def fetch_json(url, retries=3):
-    """Fetch JSON from URL with retry logic."""
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "HerdVibe-Collector/1.0"})
@@ -54,8 +52,7 @@ def fetch_json(url, retries=3):
 def fetch_position_paged(symbol, side, start_ms, max_pages=1):
     """
     Fetch margin position data with pagination using 1h timeframe.
-    Each page: 10000 × 1h = 416 days.
-    Paginates backwards from now.
+    Each page: 10000 × 1h = 416 days. Paginates backwards from now.
     """
     all_data = []
     cursor = int(time.time() * 1000)
@@ -76,7 +73,6 @@ def fetch_position_paged(symbol, side, start_ms, max_pages=1):
 
         all_data.extend(data)
 
-        # Move cursor before oldest point
         oldest_ts = data[-1][0]
         cursor = oldest_ts - 1
 
@@ -86,10 +82,8 @@ def fetch_position_paged(symbol, side, start_ms, max_pages=1):
         if page > 0:
             print(f"    ...page {page+1}, {len(all_data)} points so far")
 
-    # Sort chronologically
     all_data.sort(key=lambda x: x[0])
 
-    # Deduplicate by timestamp
     seen = set()
     deduped = []
     for item in all_data:
@@ -103,7 +97,6 @@ def fetch_position_paged(symbol, side, start_ms, max_pages=1):
 
 
 def fetch_candle_data(symbol, timeframe, start_ms):
-    """Fetch OHLCV candle data for price."""
     url = (
         f"{BASE_URL}/candles/trade:{timeframe}:{symbol}/hist"
         f"?limit=10000&start={start_ms}&sort=-1"
@@ -115,7 +108,6 @@ def fetch_candle_data(symbol, timeframe, start_ms):
 
 
 def collect_period(period_key):
-    """Collect all data for a specific period."""
     days_back, candle_tf, max_pages = PERIODS[period_key]
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days_back)
@@ -130,23 +122,34 @@ def collect_period(period_key):
     for coin_key, symbol in COINS.items():
         print(f"\n--- {coin_key.upper()} ({symbol}) ---")
 
-        # Fetch longs (paginated, 1h timeframe)
         longs = fetch_position_paged(symbol, "long", start_ms, max_pages)
-
-        # Fetch shorts (paginated, 1h timeframe)
         shorts = fetch_position_paged(symbol, "short", start_ms, max_pages)
 
-        # Fetch price candles
         candles = fetch_candle_data(symbol, candle_tf, start_ms)
         if isinstance(candles, list):
             candles.reverse()
         print(f"  Candles: {len(candles) if isinstance(candles, list) else 0} data points")
 
-        # Process candles -> [timestamp, close_price]
         price_data = []
         for c in candles:
             if isinstance(c, list) and len(c) >= 3:
                 price_data.append([c[0], c[2]])
+
+        # SYNC: trim price to match stats time range
+        stats_start = None
+        if longs:
+            stats_start = longs[0][0]
+        if shorts and (stats_start is None or shorts[0][0] < stats_start):
+            stats_start = shorts[0][0]
+
+        if stats_start is not None and price_data:
+            original_len = len(price_data)
+            price_data = [p for p in price_data if p[0] >= stats_start]
+            if not price_data:  # fallback if trimming removed everything
+                price_data = [[c[0], c[2]] for c in candles if isinstance(c, list) and len(c) >= 3]
+            trimmed = original_len - len(price_data)
+            if trimmed > 0:
+                print(f"  Price trimmed: {trimmed} points removed to match stats range")
 
         result[coin_key] = {
             "longs": longs,
@@ -158,7 +161,6 @@ def collect_period(period_key):
 
 
 def downsample(data, max_points=2500):
-    """Downsample data to max_points if too large, keeping first and last."""
     if not data or len(data) <= max_points:
         return data
     step = (len(data) - 1) / (max_points - 1)
@@ -168,7 +170,6 @@ def downsample(data, max_points=2500):
 
 
 def save_period(period_key, data):
-    """Save period data to JSON file with downsampling."""
     for coin_key in COINS:
         if coin_key in data:
             coin = data[coin_key]
