@@ -4,10 +4,9 @@ Bitfinex Margin Long/Short Position Data Collector
 Collects BTC, ETH, SOL margin longs/shorts and price data.
 Designed to run via GitHub Actions on a schedule.
 
-Key fix: stats API uses matching timeframes (1h, 1D) instead of 1m.
-  - 1m × 10000 = ~7 days only (old broken behavior)
-  - 1h × 10000 = ~416 days (covers 90d, 1y easily)
-  - 1D × 10000 = ~27 years (covers everything)
+Stats API uses 1h timeframe for all periods:
+  - 1h × 10000 = 416 days per page
+  - 90d/1y = 1 page, 3y = 3 pages, 5y = 5 pages, all = 9 pages
 """
 
 import json
@@ -25,16 +24,14 @@ COINS = {
     "sol": "tSOLUSD",
 }
 
-# Period configs: (days_back, candle_timeframe, stat_timeframe)
-# stat_timeframe scaled so limit=10000 covers the full period in 1 call:
-#   1h  × 10000 = 416 days  → covers 90d, 1y
-#   1D  × 10000 = 27 years  → covers 3y, 5y, all
+# Period configs: (days_back, candle_timeframe, max_stat_pages)
+# Stats always use 1h: 10000 × 1h = 416 days per page
 PERIODS = {
-    "90d":  (90,    "1h",  "1h"),
-    "1y":   (365,   "4h",  "1h"),
-    "3y":   (1095,  "1D",  "1D"),
-    "5y":   (1825,  "1D",  "1D"),
-    "all":  (3650,  "1D",  "1D"),
+    "90d":  (90,    "1h",  1),
+    "1y":   (365,   "4h",  1),
+    "3y":   (1095,  "1D",  3),
+    "5y":   (1825,  "1D",  5),
+    "all":  (3650,  "1D",  9),
 }
 
 RATE_LIMIT_DELAY = 2.5  # seconds between API calls
@@ -54,19 +51,55 @@ def fetch_json(url, retries=3):
     return []
 
 
-def fetch_position_data(symbol, side, start_ms, stat_tf="1h"):
+def fetch_position_paged(symbol, side, start_ms, max_pages=1):
     """
-    Fetch margin position (long/short) historical data.
-    Uses appropriate stat timeframe so limit=10000 covers the full period.
+    Fetch margin position data with pagination using 1h timeframe.
+    Each page: 10000 × 1h = 416 days.
+    Paginates backwards from now.
     """
-    url = (
-        f"{BASE_URL}/stats1/pos.size:{stat_tf}:{symbol}:{side}/hist"
-        f"?limit=10000&start={start_ms}&sort=-1"
-    )
-    print(f"  Fetching {symbol} {side} (tf={stat_tf})...")
-    data = fetch_json(url)
-    time.sleep(RATE_LIMIT_DELAY)
-    return data  # [[timestamp_ms, amount], ...]
+    all_data = []
+    cursor = int(time.time() * 1000)
+
+    for page in range(max_pages):
+        url = (
+            f"{BASE_URL}/stats1/pos.size:1h:{symbol}:{side}/hist"
+            f"?limit=10000&start={start_ms}&end={cursor}&sort=-1"
+        )
+        if page == 0:
+            print(f"  Fetching {symbol} {side} (1h, up to {max_pages} pages)...")
+
+        data = fetch_json(url)
+        time.sleep(RATE_LIMIT_DELAY)
+
+        if not isinstance(data, list) or not data:
+            break
+
+        all_data.extend(data)
+
+        # Move cursor before oldest point
+        oldest_ts = data[-1][0]
+        cursor = oldest_ts - 1
+
+        if cursor <= start_ms or len(data) < 10000:
+            break
+
+        if page > 0:
+            print(f"    ...page {page+1}, {len(all_data)} points so far")
+
+    # Sort chronologically
+    all_data.sort(key=lambda x: x[0])
+
+    # Deduplicate by timestamp
+    seen = set()
+    deduped = []
+    for item in all_data:
+        ts = item[0]
+        if ts not in seen:
+            seen.add(ts)
+            deduped.append(item)
+
+    print(f"  {side.capitalize()}: {len(deduped)} data points")
+    return deduped
 
 
 def fetch_candle_data(symbol, timeframe, start_ms):
@@ -83,13 +116,13 @@ def fetch_candle_data(symbol, timeframe, start_ms):
 
 def collect_period(period_key):
     """Collect all data for a specific period."""
-    days_back, candle_tf, stat_tf = PERIODS[period_key]
+    days_back, candle_tf, max_pages = PERIODS[period_key]
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days_back)
     start_ms = int(start.timestamp() * 1000)
 
     print(f"\n{'='*50}")
-    print(f"Collecting {period_key} (last {days_back} days, candle={candle_tf}, stat={stat_tf})")
+    print(f"Collecting {period_key} (last {days_back} days, candle={candle_tf}, stat_pages={max_pages})")
     print(f"{'='*50}")
 
     result = {"updated_at": now.isoformat(), "period": period_key}
@@ -97,48 +130,40 @@ def collect_period(period_key):
     for coin_key, symbol in COINS.items():
         print(f"\n--- {coin_key.upper()} ({symbol}) ---")
 
-        # Fetch longs
-        longs = fetch_position_data(symbol, "long", start_ms, stat_tf)
-        print(f"  Longs: {len(longs) if isinstance(longs, list) else 0} data points")
+        # Fetch longs (paginated, 1h timeframe)
+        longs = fetch_position_paged(symbol, "long", start_ms, max_pages)
 
-        # Fetch shorts
-        shorts = fetch_position_data(symbol, "short", start_ms, stat_tf)
-        print(f"  Shorts: {len(shorts) if isinstance(shorts, list) else 0} data points")
+        # Fetch shorts (paginated, 1h timeframe)
+        shorts = fetch_position_paged(symbol, "short", start_ms, max_pages)
 
         # Fetch price candles
         candles = fetch_candle_data(symbol, candle_tf, start_ms)
-        print(f"  Candles: {len(candles) if isinstance(candles, list) else 0} data points")
-
-        # Reverse to chronological order (sort=-1 returns newest first)
-        if isinstance(longs, list):
-            longs.reverse()
-        if isinstance(shorts, list):
-            shorts.reverse()
         if isinstance(candles, list):
             candles.reverse()
+        print(f"  Candles: {len(candles) if isinstance(candles, list) else 0} data points")
 
         # Process candles -> [timestamp, close_price]
         price_data = []
         for c in candles:
             if isinstance(c, list) and len(c) >= 3:
-                price_data.append([c[0], c[2]])  # [mts, close]
+                price_data.append([c[0], c[2]])
 
         result[coin_key] = {
-            "longs": longs if isinstance(longs, list) else [],
-            "shorts": shorts if isinstance(shorts, list) else [],
+            "longs": longs,
+            "shorts": shorts,
             "price": price_data,
         }
 
     return result
 
 
-def downsample(data, max_points=2000):
+def downsample(data, max_points=2500):
     """Downsample data to max_points if too large, keeping first and last."""
     if not data or len(data) <= max_points:
         return data
     step = (len(data) - 1) / (max_points - 1)
     result = [data[int(i * step)] for i in range(max_points - 1)]
-    result.append(data[-1])  # Always include last point
+    result.append(data[-1])
     return result
 
 
@@ -170,7 +195,6 @@ def main():
         data = collect_period(period_key)
         save_period(period_key, data)
 
-    # Create a metadata file
     meta = {
         "last_updated": datetime.now(timezone.utc).isoformat(),
         "coins": list(COINS.keys()),
