@@ -3,6 +3,11 @@
 Bitfinex Margin Long/Short Position Data Collector
 Collects BTC, ETH, SOL margin longs/shorts and price data.
 Designed to run via GitHub Actions on a schedule.
+
+Key fix: stats API uses matching timeframes (1h, 1D) instead of 1m.
+  - 1m × 10000 = ~7 days only (old broken behavior)
+  - 1h × 10000 = ~416 days (covers 90d, 1y easily)
+  - 1D × 10000 = ~27 years (covers everything)
 """
 
 import json
@@ -20,13 +25,16 @@ COINS = {
     "sol": "tSOLUSD",
 }
 
-# Period configs: (label, days_back, candle_timeframe)
+# Period configs: (days_back, candle_timeframe, stat_timeframe)
+# stat_timeframe scaled so limit=10000 covers the full period in 1 call:
+#   1h  × 10000 = 416 days  → covers 90d, 1y
+#   1D  × 10000 = 27 years  → covers 3y, 5y, all
 PERIODS = {
-    "90d":  (90,    "1h"),
-    "1y":   (365,   "4h"),
-    "3y":   (1095,  "1D"),
-    "5y":   (1825,  "1D"),
-    "all":  (3650,  "1D"),  # ~10 years, will get whatever is available
+    "90d":  (90,    "1h",  "1h"),
+    "1y":   (365,   "4h",  "1h"),
+    "3y":   (1095,  "1D",  "1D"),
+    "5y":   (1825,  "1D",  "1D"),
+    "all":  (3650,  "1D",  "1D"),
 }
 
 RATE_LIMIT_DELAY = 2.5  # seconds between API calls
@@ -46,66 +54,42 @@ def fetch_json(url, retries=3):
     return []
 
 
-def fetch_position_data(symbol, side, start_ms, limit=10000):
-    """Fetch margin position (long/short) historical data."""
+def fetch_position_data(symbol, side, start_ms, stat_tf="1h"):
+    """
+    Fetch margin position (long/short) historical data.
+    Uses appropriate stat timeframe so limit=10000 covers the full period.
+    """
     url = (
-        f"{BASE_URL}/stats1/pos.size:1m:{symbol}:{side}/hist"
-        f"?limit={limit}&start={start_ms}&sort=-1"
+        f"{BASE_URL}/stats1/pos.size:{stat_tf}:{symbol}:{side}/hist"
+        f"?limit=10000&start={start_ms}&sort=-1"
     )
-    print(f"  Fetching {symbol} {side}...")
+    print(f"  Fetching {symbol} {side} (tf={stat_tf})...")
     data = fetch_json(url)
     time.sleep(RATE_LIMIT_DELAY)
     return data  # [[timestamp_ms, amount], ...]
 
 
-def fetch_candle_data(symbol, timeframe, start_ms, limit=10000):
+def fetch_candle_data(symbol, timeframe, start_ms):
     """Fetch OHLCV candle data for price."""
     url = (
         f"{BASE_URL}/candles/trade:{timeframe}:{symbol}/hist"
-        f"?limit={limit}&start={start_ms}&sort=-1"
+        f"?limit=10000&start={start_ms}&sort=-1"
     )
     print(f"  Fetching {symbol} candles ({timeframe})...")
     data = fetch_json(url)
     time.sleep(RATE_LIMIT_DELAY)
-    # Returns [[MTS, OPEN, CLOSE, HIGH, LOW, VOLUME], ...]
     return data
-
-
-def paginate_fetch(fetch_func, *args, max_pages=5, limit_per_page=10000):
-    """Paginate API calls if needed for large date ranges."""
-    all_data = []
-    last_ts = None
-
-    for page in range(max_pages):
-        if page == 0:
-            data = fetch_func(*args, limit=limit_per_page)
-        else:
-            # Modify start_ms to last timestamp + 1
-            modified_args = list(args)
-            modified_args[1] = last_ts + 1  # start_ms is second arg
-            data = fetch_func(*modified_args, limit=limit_per_page)
-
-        if not data or len(data) == 0:
-            break
-
-        all_data.extend(data)
-        last_ts = data[-1][0]
-
-        if len(data) < limit_per_page:
-            break  # No more data
-
-    return all_data
 
 
 def collect_period(period_key):
     """Collect all data for a specific period."""
-    days_back, timeframe = PERIODS[period_key]
+    days_back, candle_tf, stat_tf = PERIODS[period_key]
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days_back)
     start_ms = int(start.timestamp() * 1000)
 
     print(f"\n{'='*50}")
-    print(f"Collecting {period_key} (last {days_back} days, {timeframe} candles)")
+    print(f"Collecting {period_key} (last {days_back} days, candle={candle_tf}, stat={stat_tf})")
     print(f"{'='*50}")
 
     result = {"updated_at": now.isoformat(), "period": period_key}
@@ -114,16 +98,16 @@ def collect_period(period_key):
         print(f"\n--- {coin_key.upper()} ({symbol}) ---")
 
         # Fetch longs
-        longs = fetch_position_data(symbol, "long", start_ms)
-        print(f"  Longs: {len(longs)} data points")
+        longs = fetch_position_data(symbol, "long", start_ms, stat_tf)
+        print(f"  Longs: {len(longs) if isinstance(longs, list) else 0} data points")
 
         # Fetch shorts
-        shorts = fetch_position_data(symbol, "short", start_ms)
-        print(f"  Shorts: {len(shorts)} data points")
+        shorts = fetch_position_data(symbol, "short", start_ms, stat_tf)
+        print(f"  Shorts: {len(shorts) if isinstance(shorts, list) else 0} data points")
 
         # Fetch price candles
-        candles = fetch_candle_data(symbol, timeframe, start_ms)
-        print(f"  Candles: {len(candles)} data points")
+        candles = fetch_candle_data(symbol, candle_tf, start_ms)
+        print(f"  Candles: {len(candles) if isinstance(candles, list) else 0} data points")
 
         # Reverse to chronological order (sort=-1 returns newest first)
         if isinstance(longs, list):
@@ -149,11 +133,13 @@ def collect_period(period_key):
 
 
 def downsample(data, max_points=2000):
-    """Downsample data to max_points if too large."""
+    """Downsample data to max_points if too large, keeping first and last."""
     if not data or len(data) <= max_points:
         return data
-    step = len(data) / max_points
-    return [data[int(i * step)] for i in range(max_points)]
+    step = (len(data) - 1) / (max_points - 1)
+    result = [data[int(i * step)] for i in range(max_points - 1)]
+    result.append(data[-1])  # Always include last point
+    return result
 
 
 def save_period(period_key, data):
