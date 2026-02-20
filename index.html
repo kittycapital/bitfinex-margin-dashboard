@@ -291,8 +291,9 @@ const COLORS = {
 };
 const P_DAYS = { '90d':90, '1y':365, '3y':1095, '5y':1825, 'all':3650 };
 const P_TF   = { '90d':'1h', '1y':'4h', '3y':'1D', '5y':'1D', 'all':'1D' };
-// Max pages of stats (10000 pts/page at 1m = ~7d per page)
-const P_PAGES = { '90d':15, '1y':20, '3y':20, '5y':20, 'all':20 };
+// Stats timeframe — scaled so limit=10000 covers full period in 1 call
+// 1h × 10000 = 416 days, 1D × 10000 = 27 years
+const S_TF   = { '90d':'1h', '1y':'1h', '3y':'1D', '5y':'1D', 'all':'1D' };
 
 let coin='btc', period='90d', charts={}, cache={};
 
@@ -309,38 +310,6 @@ function initWS() {
     };
     ws.onclose = () => setTimeout(initWS, 5000);
   } catch(e) {}
-}
-
-// ============================================================
-// PAGINATED STATS FETCHER
-// ============================================================
-async function fetchStatsPaged(sym, side, startMs, maxPages) {
-  const all = [];
-  let cursor = Date.now();
-  for (let i = 0; i < maxPages; i++) {
-    try {
-      const url = `${BFX}/stats1/pos.size:1m:${sym}:${side}/hist?limit=10000&start=${startMs}&end=${cursor}&sort=-1`;
-      const r = await fetch(url);
-      const d = await r.json();
-      if (!Array.isArray(d) || !d.length) break;
-      all.push(...d);
-      const oldest = d[d.length - 1][0];
-      cursor = oldest - 1;
-      if (cursor <= startMs || d.length < 10000) break;
-    } catch(e) { break; }
-  }
-  // Sort chronological
-  all.sort((a, b) => a[0] - b[0]);
-  // Downsample to max ~2500 points for performance
-  if (all.length > 2500) {
-    const step = Math.ceil(all.length / 2500);
-    const sampled = [];
-    for (let i = 0; i < all.length; i++) {
-      if (i % step === 0 || i === all.length - 1) sampled.push(all[i]);
-    }
-    return sampled;
-  }
-  return all;
 }
 
 // ============================================================
@@ -363,36 +332,22 @@ async function loadData() {
     }
   } catch(e) {}
 
-  // 2) Live API fallback — paginated stats + candles
-  const sym = SYMBOLS[coin], days = P_DAYS[period], tf = P_TF[period];
+  // 2) Live API fallback — uses S_TF so limit=10000 covers full period
+  const sym = SYMBOLS[coin], days = P_DAYS[period];
+  const tf = P_TF[period], stf = S_TF[period];
   const startMs = Date.now() - days * 864e5;
-  const maxPg = P_PAGES[period] || 15;
 
-  // Fetch all three in parallel (stats are paginated internally)
   const [longRaw, shortRaw, candleRaw] = await Promise.all([
-    fetchStatsPaged(sym, 'long', startMs, maxPg),
-    fetchStatsPaged(sym, 'short', startMs, maxPg),
+    fetch(`${BFX}/stats1/pos.size:${stf}:${sym}:long/hist?limit=10000&start=${startMs}&sort=-1`).then(r=>r.json()),
+    fetch(`${BFX}/stats1/pos.size:${stf}:${sym}:short/hist?limit=10000&start=${startMs}&sort=-1`).then(r=>r.json()),
     fetch(`${BFX}/candles/trade:${tf}:${sym}/hist?limit=10000&start=${startMs}&sort=-1`).then(r=>r.json()),
   ]);
 
-  // Candles: reverse to chronological, extract [ts, close]
-  const priceAll = (candleRaw||[]).reverse().map(c => [c[0], c[2]]);
+  const longs = (longRaw||[]).reverse();
+  const shorts = (shortRaw||[]).reverse();
+  const price = (candleRaw||[]).reverse().map(c => [c[0], c[2]]);
 
-  // 3) SYNC: trim price to match stats time range
-  let statsStart = Infinity;
-  if (longRaw.length) statsStart = Math.min(statsStart, longRaw[0][0]);
-  if (shortRaw.length) statsStart = Math.min(statsStart, shortRaw[0][0]);
-
-  let price;
-  if (statsStart < Infinity) {
-    price = priceAll.filter(p => p[0] >= statsStart);
-    // If trimming removed everything, use all price data
-    if (!price.length) price = priceAll;
-  } else {
-    price = priceAll;
-  }
-
-  const res = { longs: longRaw, shorts: shortRaw, price: price };
+  const res = { longs, shorts, price };
   cache[k] = res;
   document.getElementById('updateTime').textContent = 'Live · '+new Date().toLocaleTimeString();
   return res;
