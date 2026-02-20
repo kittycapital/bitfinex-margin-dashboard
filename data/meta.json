@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-02-20T08:32:54.256610+00:00",
+  "last_updated": "2026-02-20T09:31:40.629320+00:00",
   "coins": [
     "btc",
     "eth",
@@ -8,9 +8,7 @@
   "periods": [
     "90d",
     "1y",
-    "3y",
-    "5y",
-    "all"
+    "3y"
   ],
   "symbols": {
     "btc": "tBTCUSD",
