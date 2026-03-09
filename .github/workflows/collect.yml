@@ -2,7 +2,7 @@ name: Collect Bitfinex Margin Data
 
 on:
   schedule:
-    - cron: '0 */1 * * *'  # Every 1 hour
+    - cron: '0 0 * * *'  # Every day at 00:00 UTC (KST 09:00)
   workflow_dispatch:  # Manual trigger
 
 permissions:
