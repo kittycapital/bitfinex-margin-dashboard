@@ -142,6 +142,7 @@
   .loading-text { font-size: 0.75rem; }
   .error-msg { text-align: center; padding: 40px; color: var(--accent-red); font-size: 0.8rem; }
   .error-msg .sub { font-size: 0.7rem; color: var(--text-muted); margin-top: 6px; }
+  .empty-state { display:flex; align-items:center; justify-content:center; height:100%; width:100%; position:absolute; top:0; left:0; color:var(--text-muted); font-family:'JetBrains Mono',monospace; font-size:0.85rem; letter-spacing:0.5px; }
 
   .share-bar {
     display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -254,7 +255,7 @@
         <h2 class="section-title"><span class="dot" style="background:var(--accent-red)"></span><span id="lblShorts">BTC/USD SHORTS</span></h2>
         <span class="section-value value-red" id="valShorts"></span>
       </div>
-      <div class="chart-wrap h-pos"><canvas id="shortsChart"></canvas></div>
+      <div class="chart-wrap h-pos"><canvas id="shortsChart"></canvas><div id="shortsEmpty" class="empty-state" style="display:none;">데이터 부족</div></div>
     </section>
 
     <section class="chart-section">
@@ -263,7 +264,7 @@
         <h2 class="section-title"><span class="dot" style="background:var(--accent-green)"></span><span id="lblLongs">BTC/USD LONGS</span></h2>
         <span class="section-value value-green" id="valLongs"></span>
       </div>
-      <div class="chart-wrap h-pos"><canvas id="longsChart"></canvas></div>
+      <div class="chart-wrap h-pos"><canvas id="longsChart"></canvas><div id="longsEmpty" class="empty-state" style="display:none;">데이터 부족</div></div>
     </section>
   </div>
 
@@ -399,6 +400,7 @@ function updateSummary(d) {
   document.getElementById('sumLongs').textContent=fmt(ll,1);
   document.getElementById('sumShorts').textContent=fmt(ls,1);
   if(ll&&ls&&ls>0){const r=ll/ls; document.getElementById('sumRatio').textContent=r.toFixed(2); document.getElementById('sumRatio').className='value '+(r>=1?'value-green':'value-red'); document.getElementById('sumRatioLbl').textContent=r>=1?'Long Dominant':'Short Dominant'; document.getElementById('sumRatioLbl').className='change '+(r>=1?'chg-up':'chg-down');}
+  else{document.getElementById('sumRatio').textContent='—'; document.getElementById('sumRatio').className='value value-yellow'; document.getElementById('sumRatioLbl').textContent=''; document.getElementById('sumRatioLbl').className='change';}
   setC('sumPriceChg',fp?((lp-fp)/fp)*100:null); setC('sumLongsChg',fl?((ll-fl)/fl)*100:null); setC('sumShortsChg',fs?((ls-fs)/fs)*100:null);
 }
 function setC(id,v){const e=document.getElementById(id);if(v==null){e.textContent='';return;}e.textContent=fmtPct(v);e.className='change '+(v>=0?'chg-up':'chg-down');}
@@ -447,14 +449,18 @@ async function render() {
     document.getElementById('lblShorts').textContent=lb+' SHORTS';
     document.getElementById('lblLongs').textContent=lb+' LONGS';
     if(d.price.length) document.getElementById('valPrice').textContent=fmtP(d.price[d.price.length-1][1]);
-    if(d.shorts.length) document.getElementById('valShorts').textContent=fmt(d.shorts[d.shorts.length-1][1],1)+' '+coin.toUpperCase();
-    if(d.longs.length) document.getElementById('valLongs').textContent=fmt(d.longs[d.longs.length-1][1],1)+' '+coin.toUpperCase();
+    if(d.shorts.length) { document.getElementById('valShorts').textContent=fmt(d.shorts[d.shorts.length-1][1],1)+' '+coin.toUpperCase(); }
+    else { document.getElementById('valShorts').textContent=''; }
+    if(d.longs.length) { document.getElementById('valLongs').textContent=fmt(d.longs[d.longs.length-1][1],1)+' '+coin.toUpperCase(); }
+    else { document.getElementById('valLongs').textContent=''; }
     updateSummary(d);
     la.style.display='none'; ca.style.display='block';
     const c=COLORS[coin];
     mkChart('priceChart',d.price,c.line,c.fill,(i)=>'Price: '+fmtP(i.parsed.y));
-    mkChart('shortsChart',d.shorts,'#ff4757','rgba(255,71,87,0.1)',(i)=>'Shorts: '+fmt(i.parsed.y,2)+' '+coin.toUpperCase());
-    mkChart('longsChart',d.longs,'#00d4aa','rgba(0,212,170,0.1)',(i)=>'Longs: '+fmt(i.parsed.y,2)+' '+coin.toUpperCase());
+    if(d.shorts.length) { document.getElementById('shortsEmpty').style.display='none'; document.getElementById('shortsChart').style.display=''; mkChart('shortsChart',d.shorts,'#ff4757','rgba(255,71,87,0.1)',(i)=>'Shorts: '+fmt(i.parsed.y,2)+' '+coin.toUpperCase()); }
+    else { if(charts['shortsChart']){charts['shortsChart'].destroy();delete charts['shortsChart'];} document.getElementById('shortsChart').style.display='none'; document.getElementById('shortsEmpty').style.display='flex'; }
+    if(d.longs.length) { document.getElementById('longsEmpty').style.display='none'; document.getElementById('longsChart').style.display=''; mkChart('longsChart',d.longs,'#00d4aa','rgba(0,212,170,0.1)',(i)=>'Longs: '+fmt(i.parsed.y,2)+' '+coin.toUpperCase()); }
+    else { if(charts['longsChart']){charts['longsChart'].destroy();delete charts['longsChart'];} document.getElementById('longsChart').style.display='none'; document.getElementById('longsEmpty').style.display='flex'; }
   } catch(err) {
     console.error(err);
     la.innerHTML='<div class="error-msg">데이터 로드 실패<div class="sub">'+err.message+' — 잠시 후 다시 시도해주세요.</div></div>';
